@@ -8,6 +8,8 @@
 #include <mgba/internal/arm/isa-inlines.h>
 #include <mgba/internal/arm/emitter-thumb.h>
 
+#include <mgba/core/tracing.h>
+
 // Instruction definitions
 // Beware pre-processor insanity
 
@@ -256,8 +258,10 @@ DEFINE_INSTRUCTION_WITH_HIGH_THUMB(ADD4,
 
 DEFINE_INSTRUCTION_WITH_HIGH_THUMB(CMP3, int32_t aluOut = cpu->gprs[rd] - cpu->gprs[rm]; THUMB_SUBTRACTION_S(cpu->gprs[rd], cpu->gprs[rm], aluOut))
 DEFINE_INSTRUCTION_WITH_HIGH_THUMB(MOV3,
+    uint32_t old_pc = cpu->gprs[ARM_PC];
 	cpu->gprs[rd] = cpu->gprs[rm];
 	if (rd == ARM_PC) {
+        cpu_tracing_add_edge(old_pc, cpu->gprs[ARM_PC], EDGE_BRANCH);
 		currentCycles += ThumbWritePC(cpu);
 	})
 
@@ -325,9 +329,13 @@ DEFINE_LOAD_STORE_MULTIPLE_THUMB(STMIA,
 	DEFINE_INSTRUCTION_THUMB(B ## COND, \
 		if (ARM_COND_ ## COND) { \
 			int8_t immediate = opcode; \
+            uint32_t old_pc = cpu->gprs[ARM_PC]; \
 			cpu->gprs[ARM_PC] += (int32_t) immediate << 1; \
+            cpu_tracing_add_edge(old_pc, cpu->gprs[ARM_PC], EDGE_BRANCH); \
 			currentCycles += ThumbWritePC(cpu); \
-		})
+		} else { \
+            cpu_tracing_add_edge(cpu->gprs[ARM_PC], cpu->gprs[ARM_PC] - 2, EDGE_BRANCH); \
+            })
 
 DEFINE_CONDITIONAL_BRANCH_THUMB(EQ)
 DEFINE_CONDITIONAL_BRANCH_THUMB(NE)
@@ -383,8 +391,10 @@ DEFINE_LOAD_STORE_MULTIPLE_THUMB(PUSHR,
 DEFINE_INSTRUCTION_THUMB(ILL, ARM_ILL)
 DEFINE_INSTRUCTION_THUMB(BKPT, cpu->irqh.bkpt16(cpu, opcode & 0xFF);)
 DEFINE_INSTRUCTION_THUMB(B,
+    uint32_t old_pc = cpu->gprs[ARM_PC];
 	int16_t immediate = (opcode & 0x07FF) << 5;
 	cpu->gprs[ARM_PC] += (((int32_t) immediate) >> 4);
+    cpu_tracing_add_edge(old_pc, cpu->gprs[ARM_PC], EDGE_BRANCH);
 	currentCycles += ThumbWritePC(cpu);)
 
 DEFINE_INSTRUCTION_THUMB(BL1,
@@ -396,6 +406,7 @@ DEFINE_INSTRUCTION_THUMB(BL2,
 	uint32_t pc = cpu->gprs[ARM_PC];
 	cpu->gprs[ARM_PC] = cpu->gprs[ARM_LR] + immediate;
 	cpu->gprs[ARM_LR] = pc - 1;
+    cpu_tracing_add_edge(pc, cpu->gprs[ARM_PC], EDGE_CALL);
 	currentCycles += ThumbWritePC(cpu);)
 
 DEFINE_INSTRUCTION_THUMB(BX,
@@ -405,7 +416,11 @@ DEFINE_INSTRUCTION_THUMB(BX,
 	if (rm == ARM_PC) {
 		misalign = cpu->gprs[rm] & 0x00000002;
 	}
+    uint32_t old_pc = cpu->gprs[ARM_PC];
 	cpu->gprs[ARM_PC] = (cpu->gprs[rm] & 0xFFFFFFFE) - misalign;
+    // Should be EDGE_CALL but the games use bx r0 to return so we would have
+    // false positives.
+    cpu_tracing_add_edge(old_pc, cpu->gprs[ARM_PC], EDGE_BRANCH);
 	if (cpu->executionMode == MODE_THUMB) {
 		currentCycles += ThumbWritePC(cpu);
 	} else {

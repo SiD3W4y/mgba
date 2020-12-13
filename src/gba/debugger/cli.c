@@ -7,6 +7,7 @@
 
 #include <mgba/core/core.h>
 #include <mgba/core/serialize.h>
+#include <mgba/core/tracing.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/io.h>
 #include <mgba/internal/gba/video.h>
@@ -16,6 +17,8 @@ static void _GBACLIDebuggerInit(struct CLIDebuggerSystem*);
 static bool _GBACLIDebuggerCustom(struct CLIDebuggerSystem*);
 
 static void _frame(struct CLIDebugger*, struct CLIDebugVector*);
+static void _tracing_start(struct CLIDebugger*, struct CLIDebugVector*);
+static void _tracing_save(struct CLIDebugger*, struct CLIDebugVector*);
 #if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 static void _load(struct CLIDebugger*, struct CLIDebugVector*);
 static void _save(struct CLIDebugger*, struct CLIDebugVector*);
@@ -23,6 +26,8 @@ static void _save(struct CLIDebugger*, struct CLIDebugVector*);
 
 struct CLIDebuggerCommandSummary _GBACLIDebuggerCommands[] = {
 	{ "frame", _frame, "", "Frame advance" },
+    { "tracing-start", _tracing_start, "", "Enables instruction tracing"},
+    { "tracing-save", _tracing_save, "S", "Save execution trace to file"},
 #if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	{ "load", _load, "*", "Load a savestate" },
 	{ "save", _save, "*", "Save a savestate" },
@@ -74,6 +79,41 @@ static void _frame(struct CLIDebugger* debugger, struct CLIDebugVector* dv) {
 	struct GBACLIDebugger* gbaDebugger = (struct GBACLIDebugger*) debugger->system;
 	gbaDebugger->frameAdvance = true;
 	gbaDebugger->inVblank = GBARegisterDISPSTATGetInVblank(((struct GBA*) gbaDebugger->core->board)->memory.io[REG_DISPSTAT >> 1]);
+}
+
+static void _tracing_start(struct CLIDebugger* debugger, struct CLIDebugVector* dv) {
+    UNUSED(dv);
+    struct CLIDebuggerBackend* be = debugger->backend;
+
+    if (cpu_tracing_enabled())
+    {
+        be->printf(be, "Tracer is already running\n");
+        return;
+    }
+
+    cpu_tracing_start();
+}
+
+static void _tracing_save(struct CLIDebugger* debugger, struct CLIDebugVector* dv) {
+    struct CLIDebuggerBackend* be = debugger->backend;
+
+    if (!cpu_tracing_enabled())
+    {
+        be->printf(be, "Tracer is not running\n");
+        return;
+    }
+
+    if (!dv || dv->type != CLIDV_CHAR_TYPE)
+    {
+        be->printf(be, "%s\n", ERROR_MISSING_ARGS);
+        return;
+    }
+
+    if (!cpu_tracing_save(dv->charValue))
+    {
+        be->printf(be, "There was an error saving the trace\n");
+        return;
+    }
 }
 
 #if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2

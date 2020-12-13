@@ -19,7 +19,8 @@ set(SOURCE_FILES
 	sync.c
 	thread.c
 	tile-cache.c
-	timing.c)
+	timing.c
+    tracing.c)
 
 set(TEST_FILES
 	test/core.c)
