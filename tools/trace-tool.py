@@ -13,7 +13,15 @@ class TraceEdgeType:
     Call = 1
 
 
-def trace_to_db(trace_path, db_path, verbose):
+class MgbaTrace:
+    def __init__(self, basic_blocks, functions, edges, event_count):
+        self.basic_blocks = basic_blocks
+        self.functions = functions
+        self.edges = edges
+        self.event_count = event_count
+
+
+def load_trace(trace_path, verbose):
     fp = open(trace_path, 'rb')
     bbs = {}  # addr -> count mapping
     functions = set()  # set of function addresses
@@ -60,6 +68,13 @@ def trace_to_db(trace_path, db_path, verbose):
         print(f"Unique basic blocks : {len(bbs)}")
         print(f"Functions called    : {len(functions)}")
 
+    return MgbaTrace(bbs, functions, edges, event_count)
+
+
+def trace_to_db(trace_path, db_path, verbose):
+    """ mgba trace -> trace database """
+    trace = load_trace(trace_path, verbose)
+
     # Create and fill the database
     s = sqlite3.connect(db_path)
     c = s.cursor()
@@ -83,15 +98,43 @@ def trace_to_db(trace_path, db_path, verbose):
     s.close()
 
 
+def trace_to_wakare_db(trace_path, db_path, verbose):
+    """ mgba trace -> wakare compatible database """
+    trace = load_trace(trace_path, verbose)
+    s = sqlite3.connect(db_path)
+    c = s.cursor()
+
+    c.execute("CREATE TABLE branches (step INTEGER NOT NULL PRIMARY KEY, type INTEGER, source INTEGER, destination INTEGER);")
+    c.execute("CREATE TABLE mappings (id INTEGER NOT NULL PRIMARY KEY, filename TEXT, start INTEGER, end INTEGER);")
+    c.execute("CREATE TABLE hitcounts (id INTEGER NOT NULL PRIMARY KEY, address INTEGER, hitcount INTEGER);")
+
+    # Insert gba mappings (needed for wakare to work)
+    c.execute("INSERT INTO mappings (id, filename, start, end) VALUES (?, ?, ?, ?);",
+              (0, "ROM", 0x08000000, 0x0a000000))
+
+    for i, bb in enumerate(trace.basic_blocks.items()):
+        # Sometimes there are a few weird artifacts in the trace (bios calls maybe ?)
+        if bb[0] >= 0x08000000:
+            c.execute("INSERT INTO hitcounts (id, address, hitcount) VALUES (?, ?, ?)",
+                    (i, bb[0], bb[1]))
+
+    s.commit()
+    s.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="mGBA trace to database converter")
     parser.add_argument("-o", "--output", help="Output database file", default="output.db")
     parser.add_argument("-v", "--verbose", help="Print stats about the trace", action="store_true")
+    parser.add_argument("-w", "--wakare", help="Output a wakare compatible database", action="store_true")
     parser.add_argument("input", help="Input binary trace file")
 
     args = parser.parse_args()
 
-    trace_to_db(args.input, args.output, args.verbose)
+    if not args.wakare:
+        trace_to_db(args.input, args.output, args.verbose)
+    else:
+        trace_to_wakare_db(args.input, args.output, args.verbose)
 
 if __name__ == '__main__':
     main()
